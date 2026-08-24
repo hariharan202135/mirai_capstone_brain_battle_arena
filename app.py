@@ -4,6 +4,8 @@ import random
 import string
 import json
 import re
+import pandas as pd
+import difflib
 import time
 from datetime import datetime, timezone
 
@@ -275,286 +277,94 @@ def get_previous_questions_avoid_list():
 
 
 
-def fresh_fallback_questions(topics, difficulty):
-    """
-    Backup quiz used only when Gemini is unavailable.
-    It deliberately creates three variants per selected topic so the
-    fallback also follows the 15-question / 5-topic structure.
-    """
-    questions = []
-
-    def add(topic, question, options, answer):
-        questions.append({
-            "topic": topic,
-            "difficulty": difficulty,
-            "question": question,
-            "options": options,
-            "answer": answer,
-            "explanation": f"The correct answer is {answer}."
-        })
-
-    for topic in topics:
-        if topic == "Mathematics":
-            a = random.randint(12, 35)
-            b = random.randint(6, 18)
-            product = a * b
-            add(
-                topic,
-                f"What is {a} × {b}?",
-                [str(product), str(product + 8), str(product - 6), str(product + 12)],
-                str(product)
-            )
-
-            base = random.choice([120, 160, 200, 240, 300])
-            percent = random.choice([10, 15, 20, 25])
-            answer = base * percent // 100
-            add(
-                topic,
-                f"What is {percent}% of {base}?",
-                [str(answer), str(answer + 10), str(max(1, answer - 10)), str(answer + 20)],
-                str(answer)
-            )
-
-            x = random.randint(8, 20)
-            total = x + 7
-            add(
-                topic,
-                f"If x + 7 = {total}, what is x?",
-                [str(x), str(x + 1), str(x + 2), str(x - 1)],
-                str(x)
-            )
-
-        elif topic == "Number Patterns":
-            start = random.randint(2, 12)
-            step = random.randint(2, 7)
-            values = [start + step * i for i in range(4)]
-            answer = values[-1] + step
-            add(
-                topic,
-                f"What comes next: {', '.join(map(str, values))}, ?",
-                [str(answer), str(answer + step), str(answer + 2), str(answer - step)],
-                str(answer)
-            )
-
-            start = random.randint(2, 8)
-            values = [start * (2 ** i) for i in range(4)]
-            answer = values[-1] * 2
-            add(
-                topic,
-                f"What comes next: {', '.join(map(str, values))}, ?",
-                [str(answer), str(answer + 4), str(answer - 2), str(answer * 2)],
-                str(answer)
-            )
-
-            start = random.randint(3, 10)
-            values = [start + i * 3 for i in range(4)]
-            answer = values[-1] + 3
-            add(
-                topic,
-                f"Find the next number: {', '.join(map(str, values))}, ?",
-                [str(answer), str(answer + 3), str(answer - 3), str(answer + 6)],
-                str(answer)
-            )
-
-        elif topic == "Logical Reasoning":
-            add(topic, "If A is taller than B and B is taller than C, who is shortest?",
-                ["A", "B", "C", "Cannot say"], "C")
-            add(topic, "Which one is different from the other three?",
-                ["Triangle", "Square", "Circle", "Rectangle"], "Circle")
-            add(topic, "If all cats are animals, which statement is certain?",
-                ["All animals are cats", "All cats are animals", "No cats are animals", "Some animals are not cats"],
-                "All cats are animals")
-
-        elif topic == "Aptitude":
-            speed = random.choice([40, 50, 60, 70])
-            hours = random.choice([2, 3, 4])
-            distance = speed * hours
-            add(topic,
-                f"A vehicle travels at {speed} km/h for {hours} hours. What distance does it cover?",
-                [f"{distance} km", f"{distance + speed} km", f"{distance - speed} km", f"{distance + 20} km"],
-                f"{distance} km")
-            nums = random.sample(range(10, 51), 3)
-            avg = sum(nums) / 3
-            add(topic,
-                f"What is the average of {nums[0]}, {nums[1]} and {nums[2]}?",
-                [str(avg), str(avg + 2), str(avg - 2), str(avg + 5)],
-                str(avg))
-            price = random.choice([400, 500, 600, 800])
-            discount = random.choice([10, 20])
-            sale = price - price * discount // 100
-            add(topic,
-                f"A product costs ₹{price} and gets a {discount}% discount. What is the sale price?",
-                [f"₹{sale}", f"₹{sale + 20}", f"₹{sale + 40}", f"₹{sale - 20}"],
-                f"₹{sale}")
-
-        elif topic == "Brain Puzzles":
-            add(topic, "Which month has 28 days?", ["February only", "January only", "Every month", "None"], "Every month")
-            add(topic, "A clock shows 3:00. What is the angle between the hands?",
-                ["30°", "60°", "90°", "120°"], "90°")
-            add(topic, "What can travel around the world while staying in one corner?",
-                ["A stamp", "A clock", "A cloud", "A shadow"], "A stamp")
-
-        elif topic == "Riddles":
-            add(topic, "I have keys but cannot open locks. What am I?",
-                ["Piano", "Door", "Map", "Book"], "Piano")
-            add(topic, "I get wetter the more I dry. What am I?",
-                ["Sponge", "Towel", "Paper", "Cloth"], "Towel")
-            add(topic, "I have hands but cannot clap. What am I?",
-                ["Robot", "Clock", "Tree", "Chair"], "Clock")
-
-        elif topic == "Verbal Ability":
-            add(topic, "Choose the synonym of 'rapid'.", ["Slow", "Quick", "Weak", "Late"], "Quick")
-            add(topic, "Choose the antonym of 'ancient'.", ["Old", "Historic", "Modern", "Past"], "Modern")
-            add(topic, "Choose the correctly spelled word.",
-                ["Seperate", "Separate", "Seperete", "Separete"], "Separate")
-
-        elif topic == "Science":
-            add(topic, "Which planet is known as the Red Planet?",
-                ["Earth", "Mars", "Jupiter", "Venus"], "Mars")
-            add(topic, "Which gas do plants mainly use during photosynthesis?",
-                ["Oxygen", "Nitrogen", "Carbon dioxide", "Hydrogen"], "Carbon dioxide")
-            add(topic, "What is H2O commonly called?",
-                ["Salt", "Water", "Oxygen", "Hydrogen"], "Water")
-
-        elif topic == "Computer Fundamentals":
-            add(topic, "Which device is mainly used to type text?",
-                ["Monitor", "Keyboard", "Speaker", "Printer"], "Keyboard")
-            add(topic, "What does CPU stand for?",
-                ["Central Processing Unit", "Computer Power Unit", "Core Program Utility", "Central Program User"],
-                "Central Processing Unit")
-            add(topic, "Which is an operating system?",
-                ["Python", "Linux", "HTML", "SQL"], "Linux")
-
-        elif topic == "General Knowledge":
-            add(topic, "How many continents are commonly recognized?",
-                ["5", "6", "7", "8"], "7")
-            add(topic, "Which is the largest ocean?",
-                ["Atlantic", "Indian", "Pacific", "Arctic"], "Pacific")
-            add(topic, "What is the capital of India?",
-                ["Mumbai", "Chennai", "New Delhi", "Kolkata"], "New Delhi")
-
-        elif topic == "History":
-            add(topic, "India became independent in which year?",
-                ["1945", "1946", "1947", "1950"], "1947")
-            add(topic, "The Taj Mahal was built by which Mughal emperor?",
-                ["Akbar", "Shah Jahan", "Babur", "Aurangzeb"], "Shah Jahan")
-            add(topic, "Who is known as the Father of the Indian Constitution?",
-                ["Mahatma Gandhi", "B. R. Ambedkar", "Jawaharlal Nehru", "Sardar Patel"],
-                "B. R. Ambedkar")
-
-        elif topic == "Geography":
-            add(topic, "Which is the largest continent?",
-                ["Africa", "Asia", "Europe", "Australia"], "Asia")
-            add(topic, "Mount Everest is part of which mountain range?",
-                ["Andes", "Alps", "Himalayas", "Rockies"], "Himalayas")
-            add(topic, "Which is the longest river in India?",
-                ["Ganga", "Yamuna", "Godavari", "Narmada"], "Ganga")
-
-        elif topic == "Economics":
-            add(topic, "What does GDP stand for?",
-                ["Gross Domestic Product", "General Development Price", "Global Domestic Profit", "Gross Development Plan"],
-                "Gross Domestic Product")
-            add(topic, "Inflation generally means?",
-                ["Fall in prices", "Rise in general prices", "Fall in income", "Rise in exports"],
-                "Rise in general prices")
-            add(topic, "Which institution issues currency notes in India?",
-                ["SEBI", "RBI", "IRDAI", "NITI Aayog"], "RBI")
-
-        elif topic == "Sports":
-            add(topic, "How many players are on the field for one cricket team?",
-                ["9", "10", "11", "12"], "11")
-            add(topic, "Which sport uses a shuttlecock?",
-                ["Tennis", "Badminton", "Hockey", "Football"], "Badminton")
-            add(topic, "How many rings are on the Olympic symbol?",
-                ["4", "5", "6", "7"], "5")
-
-        elif topic == "Movies & Entertainment":
-            add(topic, "Which award is popularly associated with Indian cinema?",
-                ["Oscars", "National Film Awards", "Pulitzer", "Booker"],
-                "National Film Awards")
-            add(topic, "A screenplay is mainly used for?",
-                ["Cooking", "Film or video production", "Accounting", "Driving"],
-                "Film or video production")
-            add(topic, "Which device is commonly used to record video?",
-                ["Camera", "Calculator", "Router", "Scanner"], "Camera")
-
-        else:
-            add(topic, f"Which option is most closely related to {topic}?",
-                [topic, "Cooking", "Driving", "Gardening"], topic)
-            add(topic, f"What is mainly studied under {topic}?",
-                [topic, "Weather only", "Recipes only", "Road signs only"], topic)
-            add(topic, f"Which option belongs to {topic}?",
-                [topic, "Vehicle", "Fruit", "Furniture"], topic)
-
-    random.shuffle(questions)
-    return questions[:TOTAL_QUESTIONS]
+def normalize_question(text):
+    text = str(text).lower().strip()
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text
 
 
+def has_internal_duplicates(questions):
+    seen = set()
+    for question in questions:
+        text = normalize_question(question.get("question", ""))
+        if not text or text in seen:
+            return True
+        seen.add(text)
+    return False
 
+
+def question_is_duplicate(question, old_question):
+    new_text = normalize_question(question.get("question", ""))
+    old_text = normalize_question(old_question)
+
+    if not new_text or not old_text:
+        return False
+
+    if new_text == old_text:
+        return True
+
+    similarity = difflib.SequenceMatcher(
+        None, new_text, old_text
+    ).ratio()
+
+    return similarity >= 0.88
 
 
 def generate_questions(topics, difficulty):
     topic_text = ", ".join(topics)
-    avoid_questions = get_previous_questions_avoid_list()
+    previous_questions = get_previous_questions_avoid_list()
 
-    avoid_clause = ""
-
-    if avoid_questions:
-        avoid_clause = (
-            "\n\nSTRICT DO-NOT-USE LIST FROM PREVIOUS BATTLES:\n"
-            + "\n".join(f"- {q}" for q in avoid_questions)
-        )
-
-    freshness_id = f"{time.time_ns()}-{random.randint(100000, 999999)}"
+    avoid_text = "\n".join(
+        f"- {question}" for question in previous_questions
+    )
 
     prompt = f"""
-Create a completely NEW competitive quiz for Brain Battle Arena.
+You are the dedicated AI question engine for Brain Battle Arena.
 
-Fresh generation ID: {freshness_id}
+Create a completely NEW quiz for this battle.
 
 Selected topics: {topic_text}
 Difficulty: {difficulty}
 
 Create exactly 15 multiple-choice questions.
+Create exactly 3 questions for each of the 5 selected topics.
 
-There are exactly 5 selected topics.
-Create exactly 3 questions for EACH selected topic.
-
-IMPORTANT FRESHNESS RULES:
-- Every question must be newly created for THIS battle.
-- NEVER reuse an old question.
-- NEVER copy an old question.
-- NEVER paraphrase an old question.
-- NEVER slightly rewrite an old question.
-- NEVER reuse an old question and only change numbers, names, dates,
-  places, options, or wording.
-- Do not reuse the same scenario or reasoning pattern from the old list.
-- Use different facts, situations, values and reasoning paths.
-- Do not repeat a question within this new 15-question set.
-- The questions should feel like a fresh quiz, not a recycled question bank.
+ABSOLUTE UNIQUENESS RULES:
+1. Every question must be newly authored for this battle.
+2. NEVER copy a previous question.
+3. NEVER paraphrase a previous question.
+4. NEVER slightly rewrite an old question.
+5. NEVER keep the same structure and only change numbers, names,
+   dates, places, values, or options.
+6. NEVER reuse the same scenario, reasoning chain, puzzle setup,
+   example, or fact pattern.
+7. Two questions that test essentially the same idea count as duplicates.
+8. Never repeat a question inside this 15-question set.
 
 QUALITY RULES:
-- Exactly 4 different options per question.
+- Exactly 4 unique options for every question.
 - Exactly one correct answer.
 - The answer must exactly match one option.
-- Respect the requested difficulty.
+- Match the requested difficulty.
+- Questions must be clear, unambiguous, useful and engaging.
 - Include a short explanation.
 - Return ONLY valid JSON.
-- Do not return markdown.
+- Do not use markdown.
 
-{avoid_clause}
+STRICT DO-NOT-USE LIST FROM PREVIOUS BATTLES:
+{avoid_text if avoid_text else "No previous questions are available."}
 
-Before returning the JSON, mentally compare every generated question
-against the DO-NOT-USE list and replace anything that is the same,
-nearly the same, paraphrased, or only numerically modified.
+Before returning the JSON, compare every generated question with the
+DO-NOT-USE list and replace anything that is identical, very similar,
+paraphrased, structurally recycled, or only numerically changed.
 
 Return exactly this structure:
-
 [
   {{
     "topic": "Science",
     "difficulty": "Medium",
-    "question": "Question",
+    "question": "Question here",
     "options": ["A", "B", "C", "D"],
     "answer": "A",
     "explanation": "Short explanation"
@@ -562,37 +372,49 @@ Return exactly this structure:
 ]
 """
 
-    # Several independent generations make repeated questions less likely.
-    for attempt in range(4):
+    for attempt in range(5):
         try:
             response = gemini.models.generate_content(
                 model="gemini-3.6-flash",
                 contents=prompt
             )
 
-            questions = json.loads(clean_ai_json(response.text))
-            questions = validate_questions(questions, topics)
+            questions = json.loads(
+                clean_ai_json(response.text)
+            )
+
+            questions = validate_questions(
+                questions,
+                topics
+            )
 
             if has_internal_duplicates(questions):
-                raise ValueError("AI returned duplicate questions.")
+                raise ValueError(
+                    "Gemini generated duplicate questions."
+                )
 
-            if any(question_is_duplicate(q, avoid_questions) for q in questions):
-                raise ValueError("AI returned a question from a previous battle.")
+            for question in questions:
+                for old_question in previous_questions:
+                    if question_is_duplicate(
+                        question,
+                        old_question
+                    ):
+                        raise ValueError(
+                            "Gemini generated a repeated or similar question."
+                        )
 
             random.shuffle(questions)
             return questions
 
-        except Exception:
-            if attempt < 3:
-                time.sleep(0.8)
+        except Exception as error:
+            if attempt < 4:
+                time.sleep(1)
 
-    st.toast(
-        "AI is busy. A fresh randomized backup quiz is being prepared.",
-        icon="⚡"
+    st.error(
+        "Gemini could not create a sufficiently unique quiz. "
+        "Please try starting the battle again."
     )
-
-    return fresh_fallback_questions(topics, difficulty)
-
+    st.stop()
 
 
 # -----------------------------
@@ -742,6 +564,27 @@ def check_both_players_completed(match_id):
 
 
 
+
+def build_battle_dataframe(p1, p2):
+    rows = [
+        {
+            "Player": p1["player_name"],
+            "Score": p1.get("score", 0) or 0,
+            "Correct": p1.get("correct_answers", 0) or 0,
+            "Accuracy": round(((p1.get("correct_answers", 0) or 0) / TOTAL_QUESTIONS) * 100),
+            "Best Streak": p1.get("best_streak", 0) or 0
+        },
+        {
+            "Player": p2["player_name"],
+            "Score": p2.get("score", 0) or 0,
+            "Correct": p2.get("correct_answers", 0) or 0,
+            "Accuracy": round(((p2.get("correct_answers", 0) or 0) / TOTAL_QUESTIONS) * 100),
+            "Best Streak": p2.get("best_streak", 0) or 0
+        }
+    ]
+    return pd.DataFrame(rows)
+
+
 # -----------------------------
 # Dashboard & Detailed Comparison
 # -----------------------------
@@ -817,10 +660,14 @@ def show_dashboard():
     st.markdown(f'<div class="card"><h2>👋 Welcome back, {name}</h2><p class="muted">Keep battling and climb the arena leaderboard.</p></div>', unsafe_allow_html=True)
 
     c1, c2, c3, c4 = st.columns(4)
-    with c1: st.metric("🏟️ Matches", matches)
-    with c2: st.metric("🏆 Wins", wins)
-    with c3: st.metric("📈 Win Rate", f"{win_rate}%")
-    with c4: st.metric("⭐ XP", xp)
+    with c1:
+        st.metric("🏟️ Matches", matches, delta=f"{wins} wins")
+    with c2:
+        st.metric("🏆 Wins", wins, delta=f"{wins - losses:+d} net")
+    with c3:
+        st.metric("📈 Win Rate", f"{win_rate}%", delta=f"{win_rate - 50:+d}% vs 50%")
+    with c4:
+        st.metric("⭐ XP", xp, delta=f"Level {level}")
 
     c1, c2, c3 = st.columns(3)
     with c1: st.metric("❌ Losses", losses)
@@ -885,7 +732,122 @@ def wait_for_battle(match):
 
 
 
+
+
+@st.fragment(run_every=2)
+def wait_for_opponent_finish(match, player_id):
+    latest = get_match(match["match_code"])
+
+    if not latest:
+        st.error("Match could not be found.")
+        return
+
+    both_done, players = check_both_players_completed(
+        latest["id"]
+    )
+
+    if both_done or latest.get("status") == "finished":
+        finish_battle(latest, players)
+
+        st.toast(
+            "🏆 Battle complete! Showing results...",
+            icon="🏆"
+        )
+
+        st.rerun(scope="app")
+        return
+
+    opponent = next(
+        (
+            p for p in players
+            if p["id"] != player_id
+        ),
+        None
+    )
+
+    st.markdown("""
+    <div class="result-card">
+        <div style="font-size:3rem;">🎉</div>
+        <h2>You finished all 15 questions!</h2>
+        <p class="muted">
+            Your answers are saved. Waiting for your opponent to finish...
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if opponent:
+        completed = opponent.get(
+            "current_question",
+            0
+        ) or 0
+
+        st.progress(
+            min(completed / TOTAL_QUESTIONS, 1.0)
+        )
+
+        st.caption(
+            f"👤 {opponent['player_name']}: "
+            f"{completed}/{TOTAL_QUESTIONS} completed"
+        )
+
+    st.caption(
+        "This screen updates automatically."
+    )
+
+
 @st.fragment(run_every=1)
+def battle_timer(match):
+    latest = get_match(match["match_code"])
+
+    if not latest:
+        return
+
+    remaining = get_remaining_seconds(latest)
+
+    if remaining is None:
+        return
+
+    remaining = max(remaining, 0)
+    minutes = remaining // 60
+    seconds = remaining % 60
+
+    st.metric(
+        "⏱️ Time",
+        f"{minutes:02d}:{seconds:02d}"
+    )
+
+
+@st.fragment(run_every=2)
+def opponent_progress(match, current_player_id, total):
+    latest_players = get_players(match["id"])
+
+    opponent = next(
+        (
+            player for player in latest_players
+            if player["id"] != current_player_id
+        ),
+        None
+    )
+
+    if not opponent:
+        return
+
+    st.markdown("### 👤 Opponent")
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.write(f"**{opponent['player_name']}**")
+
+    with c2:
+        answered = opponent.get("questions_answered", 0) or 0
+        st.write(f"📝 {answered}/{total}")
+
+    with c3:
+        st.write(f"⭐ {opponent.get('score', 0) or 0} XP")
+
+
+@st.fragment
 def battle_fragment(match):
     # Always fetch a fresh match and fresh player rows.
     latest_match = get_match(match["match_code"])
@@ -935,43 +897,8 @@ def battle_fragment(match):
     question_number = current_player.get("current_question", 0) or 0
     remaining = get_remaining_seconds(latest_match)
 
-    # If this player finished, check the opponent before showing waiting.
-    if question_number >= total:
-        both_done, fresh_players = check_both_players_completed(
-            latest_match["id"]
-        )
-
-        if both_done:
-            finish_battle(latest_match, fresh_players)
-            finished_match = get_match(latest_match["match_code"]) or latest_match
-            show_results(finished_match, fresh_players)
-            return
-
-        opponent = next(
-            (
-                p for p in fresh_players
-                if p["id"] != current_player["id"]
-            ),
-            None
-        )
-
-        st.markdown("""
-        <div class="result-card">
-            <div style="font-size:3rem;">🎉</div>
-            <h2>You finished all 15 questions!</h2>
-            <p class="muted">Waiting only for your opponent to finish...</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if opponent:
-            opp_q = opponent.get("current_question", 0) or 0
-            st.progress(min(opp_q / total, 1.0))
-            st.caption(
-                f"{opponent['player_name']}: "
-                f"{opp_q}/{total} completed"
-            )
-
-        return
+    # Completed players are routed by the main flow to
+    # wait_for_opponent_finish(), which is the only polling section.
 
     # Time is handled per player. If the timer expires, move directly
     # to results only when both players are done; otherwise save this
@@ -1001,9 +928,6 @@ def battle_fragment(match):
 
     question = questions[question_number]
 
-    minutes = max(remaining or 0, 0) // 60
-    seconds = max(remaining or 0, 0) % 60
-
     st.markdown("""
     <div class="hero">
         <div class="hero-title" style="font-size:2.2rem;">⚔️ Battle Mode</div>
@@ -1011,19 +935,26 @@ def battle_fragment(match):
     </div>
     """, unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
 
     with c1:
-        st.metric("⏱️ Time", f"{minutes:02d}:{seconds:02d}")
+        battle_timer(latest_match)
 
     with c2:
-        st.metric("⭐ Score", current_player.get("score", 0) or 0)
+        st.metric(
+            "⭐ Score",
+            current_player.get("score", 0) or 0
+        )
 
     with c3:
-        st.metric("🔥 Streak", current_player.get("best_streak", 0) or 0)
+        st.metric(
+            "🔥 Streak",
+            current_player.get("best_streak", 0) or 0
+        )
 
-    with c4:
-        st.metric("📝 Progress", f"{question_number + 1}/{total}")
+    st.caption(
+        f"📝 Question {question_number + 1} of {total}"
+    )
 
     st.progress(question_number / total)
 
@@ -1039,48 +970,56 @@ def battle_fragment(match):
         """,
         unsafe_allow_html=True
     )
-
     options = question["options"]
 
-    answer = st.radio(
-        "Choose your answer",
-        options,
-        key=f"answer_{current_player['id']}_{question_number}"
-    )
-
-    hints_left = current_player.get("hints_left", 0) or 0
-
-    hint_col, submit_col = st.columns([1, 3])
-
-    with hint_col:
-        if hints_left > 0 and st.button(
-            f"💡 Hint ({hints_left})",
-            use_container_width=True
-        ):
-            wrong = [
-                opt for opt in options
-                if opt != question["answer"]
-            ]
-
-            if wrong:
-                st.info(
-                    f"💡 You can eliminate: "
-                    f"**{random.choice(wrong)}**"
-                )
-
-                supabase.table("players").update({
-                    "hints_left": hints_left - 1
-                }).eq(
-                    "id",
-                    current_player["id"]
-                ).execute()
-
-    with submit_col:
-        submit = st.button(
-            "✅ SUBMIT ANSWER",
-            type="primary",
-            use_container_width=True
+    with st.form("answer_form", clear_on_submit=False):
+        answer = st.radio(
+            "Choose your answer",
+            options,
+            key=f"answer_{current_player['id']}_{question_number}"
         )
+
+        hints_left = current_player.get("hints_left", 0) or 0
+
+        hint_col, submit_col = st.columns([1, 3])
+
+        with hint_col:
+            hint = st.form_submit_button(
+                f"💡 Hint ({hints_left})",
+                use_container_width=True,
+                disabled=hints_left <= 0
+            )
+
+        with submit_col:
+            submit = st.form_submit_button(
+                "✅ SUBMIT ANSWER",
+                type="primary",
+                use_container_width=True
+            )
+
+    if hint and hints_left > 0:
+        wrong = [
+            option for option in options
+            if option != question["answer"]
+        ]
+
+        if wrong:
+            st.info(
+                f"💡 You can eliminate: **{random.choice(wrong)}**"
+            )
+
+            supabase.table("players").update({
+                "hints_left": hints_left - 1
+            }).eq(
+                "id",
+                current_player["id"]
+            ).execute()
+
+            st.toast(
+                "Hint used!",
+                icon="💡"
+            )
+
 
     if submit:
         correct = answer == question["answer"]
@@ -1097,7 +1036,6 @@ def battle_fragment(match):
                 + (25 if new_streak >= 3 else 0)
                 + (25 if new_streak >= 5 else 0)
             )
-
             new_score = old_score + points
             new_correct = old_correct + 1
 
@@ -1139,7 +1077,6 @@ def battle_fragment(match):
         except Exception:
             pass
 
-        # Q15: immediately fetch BOTH players again.
         if next_question >= total:
             time.sleep(0.2)
 
@@ -1172,38 +1109,21 @@ def battle_fragment(match):
                 icon="🏁"
             )
 
-            st.rerun(scope="fragment")
+            # Only Q15 changes the page flow. Normal answers stay
+            # inside the battle fragment, so the UI does not blink.
+            st.rerun(scope="app")
             return
 
         st.rerun(scope="fragment")
 
+
     st.divider()
 
-    opponent = next(
-        (
-            p for p in fresh_players
-            if p["id"] != current_player["id"]
-        ),
-        None
+    opponent_progress(
+        latest_match,
+        current_player["id"],
+        total
     )
-
-    if opponent:
-        st.markdown("### 👤 Opponent")
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            st.write(f"**{opponent['player_name']}**")
-
-        with c2:
-            st.write(
-                f"📝 {opponent.get('questions_answered', 0) or 0}/{total}"
-            )
-
-        with c3:
-            st.write(
-                f"⭐ {opponent.get('score', 0) or 0} XP"
-            )
 
 
 
@@ -1266,36 +1186,88 @@ def show_results(match, players):
         )
 
     st.markdown("### 📊 Head-to-Head Comparison Analysis")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(
-            f"""
-            <div class="card">
-                <h2>👤 {p1['player_name']}</h2>
-                <div class="big-score">{score1} <span style="font-size:1rem;" class="muted">pts</span></div>
-                <hr style="border-color:rgba(255,255,255,0.1)">
-                <p>🎯 <b>Correct Answers:</b> {corr1} / {TOTAL_QUESTIONS}</p>
-                <p>📈 <b>Accuracy Rate:</b> {acc1}%</p>
-                <p>🔥 <b>Best Streak:</b> {streak1}</p>
-            </div>
-            """,
-            unsafe_allow_html=True
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        st.metric(
+            "⭐ Score",
+            score1,
+            delta=score1 - score2
         )
-    with col2:
-        st.markdown(
-            f"""
-            <div class="card">
-                <h2>👤 {p2['player_name']}</h2>
-                <div class="big-score">{score2} <span style="font-size:1rem;" class="muted">pts</span></div>
-                <hr style="border-color:rgba(255,255,255,0.1)">
-                <p>🎯 <b>Correct Answers:</b> {corr2} / {TOTAL_QUESTIONS}</p>
-                <p>📈 <b>Accuracy Rate:</b> {acc2}%</p>
-                <p>🔥 <b>Best Streak:</b> {streak2}</p>
-            </div>
-            """,
-            unsafe_allow_html=True
+
+    with c2:
+        st.metric(
+            "🎯 Correct",
+            corr1,
+            delta=corr1 - corr2
         )
+
+    with c3:
+        st.metric(
+            "📈 Accuracy",
+            f"{acc1}%",
+            delta=f"{acc1 - acc2}%"
+        )
+
+    with c4:
+        st.metric(
+            "🔥 Best Streak",
+            streak1,
+            delta=streak1 - streak2
+        )
+
+    comparison_df = build_battle_dataframe(p1, p2)
+
+    st.dataframe(
+        comparison_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    with st.expander("📋 Question Review"):
+        try:
+            answer_result = (
+                supabase
+                .table("answers")
+                .select("*")
+                .eq("match_id", match["id"])
+                .execute()
+            )
+
+            answer_rows = answer_result.data or []
+            questions = safe_json(match.get("question_set")) or []
+            review_rows = []
+
+            for row in answer_rows:
+                number = row.get("question_number", 0) or 0
+                question_text = ""
+                topic = ""
+
+                if 1 <= number <= len(questions):
+                    question_text = questions[number - 1].get("question", "")
+                    topic = questions[number - 1].get("topic", "")
+
+                review_rows.append({
+                    "Player": row.get("player_id", ""),
+                    "Question": question_text,
+                    "Topic": topic,
+                    "Correct": bool(row.get("is_correct", False))
+                })
+
+            if review_rows:
+                review_df = pd.DataFrame(review_rows)
+
+                st.data_editor(
+                    review_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    disabled=True
+                )
+            else:
+                st.info("No answer review data available.")
+        except Exception:
+            st.info("Question review is unavailable for this match.")
 
     st.divider()
     current = get_current_player(players)
@@ -1416,7 +1388,19 @@ if status == "finished":
     st.stop()
 
 if status == "battle":
-    battle_fragment(match)
+    current_player = get_current_player(players)
+
+    if (
+        current_player
+        and (current_player.get("current_question", 0) or 0) >= TOTAL_QUESTIONS
+    ):
+        wait_for_opponent_finish(
+            match,
+            current_player["id"]
+        )
+    else:
+        battle_fragment(match)
+
     st.stop()
 
 # Lobby Screen
