@@ -311,6 +311,86 @@ def question_is_duplicate(question, old_question):
     return similarity >= 0.88
 
 
+
+def balance_answer_positions(questions):
+    """
+    Gemini may repeatedly put the correct answer first.
+    Randomize the option order while keeping the correct answer
+    attached to its value, and deliberately distribute correct
+    positions across A/B/C/D.
+    """
+    positions = [0, 1, 2, 3] * 4 + [0, 1, 2]
+    random.shuffle(positions)
+
+    for question, target_position in zip(questions, positions):
+        correct = question["answer"]
+        wrong = [
+            option
+            for option in question["options"]
+            if option != correct
+        ]
+
+        random.shuffle(wrong)
+
+        new_options = []
+        wrong_index = 0
+
+        for index in range(4):
+            if index == target_position:
+                new_options.append(correct)
+            else:
+                new_options.append(wrong[wrong_index])
+                wrong_index += 1
+
+        question["options"] = new_options
+
+    return questions
+
+
+def question_looks_too_easy(question):
+    text = question.get("question", "").lower().strip()
+
+    obvious_recall = [
+        "what is the capital",
+        "which planet is known",
+        "what does cpu stand for",
+        "what does gdp stand for",
+        "which gas do plants",
+        "which sport uses",
+        "what year did",
+        "who is known as",
+    ]
+
+    if any(pattern in text for pattern in obvious_recall):
+        return True
+
+    # Very short questions are usually direct-recall questions.
+    if len(text.split()) < 8:
+        return True
+
+    return False
+
+
+def validate_requested_difficulty(questions, difficulty):
+    if difficulty != "Hard":
+        return True
+
+    easy_count = sum(
+        1
+        for question in questions
+        if question_looks_too_easy(question)
+    )
+
+    if easy_count > 2:
+        raise ValueError(
+            "Gemini generated too many questions that are too easy for Hard mode."
+        )
+
+    return True
+
+
+
+
 def generate_questions(topics, difficulty):
     topic_text = ", ".join(topics)
     previous_questions = get_previous_questions_avoid_list()
@@ -346,9 +426,22 @@ QUALITY RULES:
 - Exactly 4 unique options for every question.
 - Exactly one correct answer.
 - The answer must exactly match one option.
-- Match the requested difficulty.
+- Match the requested difficulty exactly.
+- Easy: direct recall, one-step calculations, straightforward patterns or simple logic.
+- Medium: requires 2-3 reasoning steps, combining concepts, or moderate calculations.
+- Hard: requires multi-step reasoning, non-obvious patterns, deeper concept application, edge cases, or careful elimination.
+- Do not generate Hard questions that can be solved by simple recall, an obvious pattern, or one basic calculation.
+- For Hard questions, make distractor options plausible and require reasoning before selecting an answer.
+- The difficulty label must reflect the actual solving effort, not just be a label.
 - Questions must be clear, unambiguous, useful and engaging.
+- Easy: direct recall, one-step calculations, straightforward patterns or simple logic.
+- Medium: requires 2-3 reasoning steps, combining concepts, or moderate calculations.
+- Hard: requires multi-step reasoning, non-obvious patterns, deeper concept application, edge cases, or careful elimination.
+- Do not generate Hard questions that can be solved by simple recall, obvious patterns, or one basic calculation.
+- For Hard questions, make the distractor options plausible and require reasoning before selecting an answer.
 - Include a short explanation.
+- Do not put the correct answer in the same option position repeatedly.
+- Distribute correct answers across A, B, C and D as evenly as possible.
 - Return ONLY valid JSON.
 - Do not use markdown.
 
@@ -388,6 +481,11 @@ Return exactly this structure:
                 topics
             )
 
+            validate_requested_difficulty(
+                questions,
+                difficulty
+            )
+
             if has_internal_duplicates(questions):
                 raise ValueError(
                     "Gemini generated duplicate questions."
@@ -403,6 +501,8 @@ Return exactly this structure:
                             "Gemini generated a repeated or similar question."
                         )
 
+            questions = balance_answer_positions(questions)
+            # Correct-answer positions are redistributed after generation.
             random.shuffle(questions)
             return questions
 
@@ -423,10 +523,20 @@ Return exactly this structure:
 
 def create_profile(name):
     name = name.strip()
+
     if not name:
         return None
+
     try:
-        result = supabase.table("profiles").select("*").eq("player_name", name).execute()
+        result = (
+            supabase
+            .table("profiles")
+            .select("*")
+            .eq("player_name", name)
+            .limit(1)
+            .execute()
+        )
+
         if result.data:
             return result.data[0]
 
@@ -440,7 +550,9 @@ def create_profile(name):
             "total_score": 0,
             "best_streak": 0
         }).execute()
+
         return result.data[0] if result.data else None
+
     except Exception:
         return None
 
@@ -448,30 +560,102 @@ def create_profile(name):
 def save_profile_after_match(name, score, result_type, streak):
     try:
         profile = create_profile(name)
+
         if not profile:
-            return
+            return False
 
-        xp = score + (500 if result_type == "win" else 200 if result_type == "draw" else 100)
-        wins = profile["wins"] + (1 if result_type == "win" else 0)
-        losses = profile["losses"] + (1 if result_type == "loss" else 0)
-        draws = profile["draws"] + (1 if result_type == "draw" else 0)
+        total_xp = profile.get("total_xp", 0) or 0
+        matches_played = profile.get("matches_played", 0) or 0
+        wins = profile.get("wins", 0) or 0
+        losses = profile.get("losses", 0) or 0
+        draws = profile.get("draws", 0) or 0
+        total_score = profile.get("total_score", 0) or 0
+        best_streak = profile.get("best_streak", 0) or 0
 
-        supabase.table("profiles").update({
-            "total_xp": profile["total_xp"] + xp,
-            "matches_played": profile["matches_played"] + 1,
+        xp_gain = (
+            score + 500 if result_type == "win"
+            else score + 200 if result_type == "draw"
+            else score + 100
+        )
+
+        if result_type == "win":
+            wins += 1
+        elif result_type == "loss":
+            losses += 1
+        else:
+            draws += 1
+
+        payload = {
+            "total_xp": total_xp + xp_gain,
+            "matches_played": matches_played + 1,
             "wins": wins,
             "losses": losses,
             "draws": draws,
-            "total_score": profile["total_score"] + score,
-            "best_streak": max(profile["best_streak"], streak)
-        }).eq("player_name", name).execute()
+            "total_score": total_score + score,
+            "best_streak": max(best_streak, streak)
+        }
+
+        (
+            supabase
+            .table("profiles")
+            .update(payload)
+            .eq("id", profile["id"])
+            .execute()
+        )
+
+        return True
+
     except Exception:
-        pass
+        return False
 
 
 # -----------------------------
 # Completion & Race Condition Guard
 # -----------------------------
+
+
+def save_match_result(match, players, winner_player):
+    try:
+        existing = (
+            supabase
+            .table("match_results")
+            .select("id")
+            .eq("match_id", match["id"])
+            .limit(1)
+            .execute()
+        )
+
+        if existing.data:
+            return True
+
+        p1, p2 = players[0], players[1]
+
+        correct1 = p1.get("correct_answers", 0) or 0
+        correct2 = p2.get("correct_answers", 0) or 0
+
+        return bool(
+            supabase
+            .table("match_results")
+            .insert({
+                "match_id": match["id"],
+                "player1_score": p1.get("score", 0) or 0,
+                "player2_score": p2.get("score", 0) or 0,
+                "winner_player": winner_player,
+                "player1_accuracy": round(
+                    (correct1 / TOTAL_QUESTIONS) * 100,
+                    2
+                ),
+                "player2_accuracy": round(
+                    (correct2 / TOTAL_QUESTIONS) * 100,
+                    2
+                )
+            })
+            .execute()
+            .data
+        )
+
+    except Exception:
+        return False
 
 
 def finish_battle(match, players):
@@ -480,24 +664,29 @@ def finish_battle(match, players):
 
     p1, p2 = players[0], players[1]
 
-    # Never finalize until both players really completed all questions.
     if (p1.get("current_question", 0) or 0) < TOTAL_QUESTIONS:
         return False
 
     if (p2.get("current_question", 0) or 0) < TOTAL_QUESTIONS:
         return False
 
+    score1 = p1.get("score", 0) or 0
+    score2 = p2.get("score", 0) or 0
+
+    if score1 > score2:
+        result1, result2 = "win", "loss"
+        winner_player = 1
+    elif score2 > score1:
+        result1, result2 = "loss", "win"
+        winner_player = 2
+    else:
+        result1 = result2 = "draw"
+        winner_player = None
+
     try:
-        latest = get_match(match["match_code"])
-
-        if latest and latest.get("status") == "finished":
-            return True
-
-        # Only one status transition is needed. If two browsers arrive
-        # together, both will harmlessly converge on the same finished state.
+        # Change the status only if the match is still in battle state.
         supabase.table("matches").update({
-            "status": "finished",
-            "results_saved": True
+            "status": "finished"
         }).eq(
             "id",
             match["id"]
@@ -505,32 +694,28 @@ def finish_battle(match, players):
             "status",
             "battle"
         ).execute()
-
     except Exception:
-        return False
+        pass
 
-    score1 = p1.get("score", 0) or 0
-    score2 = p2.get("score", 0) or 0
+    # Save the final match result independently from profile updates.
+    save_match_result(
+        match,
+        players,
+        winner_player
+    )
 
-    if score1 > score2:
-        res1, res2 = "win", "loss"
-    elif score2 > score1:
-        res1, res2 = "loss", "win"
-    else:
-        res1 = res2 = "draw"
-
-    # Profile saving must never prevent the results screen.
+    # Profile updates must never stop the result screen.
     save_profile_after_match(
         p1["player_name"],
         score1,
-        res1,
+        result1,
         p1.get("best_streak", 0) or 0
     )
 
     save_profile_after_match(
         p2["player_name"],
         score2,
-        res2,
+        result2,
         p2.get("best_streak", 0) or 0
     )
 
@@ -589,6 +774,133 @@ def build_battle_dataframe(p1, p2):
 # Dashboard & Detailed Comparison
 # -----------------------------
 
+
+def get_dashboard_history(name):
+    try:
+        result = (
+            supabase
+            .table("players")
+            .select(
+                "match_id, player_number, player_name, "
+                "score, correct_answers, best_streak"
+            )
+            .eq("player_name", name)
+            .execute()
+        )
+
+        rows = result.data or []
+
+        completed_matches = 0
+        wins = 0
+        losses = 0
+        draws = 0
+        total_score = 0
+        total_xp = 0
+        best_streak = 0
+
+        seen_matches = set()
+
+        for row in rows:
+            match_id = row.get("match_id")
+
+            if not match_id or match_id in seen_matches:
+                continue
+
+            match_result = (
+                supabase
+                .table("matches")
+                .select("id, status")
+                .eq("id", match_id)
+                .limit(1)
+                .execute()
+            )
+
+            if (
+                not match_result.data
+                or match_result.data[0].get("status") != "finished"
+            ):
+                continue
+
+            match_players = (
+                supabase
+                .table("players")
+                .select(
+                    "player_number, player_name, "
+                    "score, best_streak"
+                )
+                .eq("match_id", match_id)
+                .order("player_number")
+                .execute()
+            ).data or []
+
+            if len(match_players) < 2:
+                continue
+
+            me = next(
+                (
+                    player
+                    for player in match_players
+                    if player["player_name"] == name
+                ),
+                None
+            )
+
+            opponent = next(
+                (
+                    player
+                    for player in match_players
+                    if player["player_name"] != name
+                ),
+                None
+            )
+
+            if not me or not opponent:
+                continue
+
+            seen_matches.add(match_id)
+            completed_matches += 1
+
+            my_score = me.get("score", 0) or 0
+            opponent_score = opponent.get("score", 0) or 0
+
+            total_score += my_score
+            best_streak = max(
+                best_streak,
+                me.get("best_streak", 0) or 0
+            )
+
+            if my_score > opponent_score:
+                wins += 1
+                total_xp += my_score + 500
+            elif my_score < opponent_score:
+                losses += 1
+                total_xp += my_score + 100
+            else:
+                draws += 1
+                total_xp += my_score + 200
+
+        return {
+            "matches_played": completed_matches,
+            "wins": wins,
+            "losses": losses,
+            "draws": draws,
+            "total_score": total_score,
+            "total_xp": total_xp,
+            "best_streak": best_streak
+        }
+
+    except Exception:
+        return {
+            "matches_played": 0,
+            "wins": 0,
+            "losses": 0,
+            "draws": 0,
+            "total_score": 0,
+            "total_xp": 0,
+            "best_streak": 0
+        }
+
+
 def show_leaderboard():
     st.markdown("### 🏆 Global Leaderboard")
     try:
@@ -640,18 +952,38 @@ def show_dashboard():
     except Exception:
         profile = None
 
-    if not profile:
+    history = get_dashboard_history(name)
+
+    if not profile and history["matches_played"] == 0:
         st.info("No completed battle history is available for this player yet.")
         show_leaderboard()
         return
 
-    matches = profile["matches_played"]
-    wins = profile["wins"]
-    losses = profile["losses"]
-    draws = profile["draws"]
-    xp = profile["total_xp"]
-    score = profile["total_score"]
-    streak = profile["best_streak"]
+    profile_matches = profile.get("matches_played", 0) if profile else 0
+    profile_matches = profile_matches or 0
+    profile_wins = profile.get("wins", 0) if profile else 0
+    profile_wins = profile_wins or 0
+    profile_losses = profile.get("losses", 0) if profile else 0
+    profile_losses = profile_losses or 0
+    profile_draws = profile.get("draws", 0) if profile else 0
+    profile_draws = profile_draws or 0
+    profile_score = profile.get("total_score", 0) if profile else 0
+    profile_score = profile_score or 0
+
+    matches = max(profile_matches, history["matches_played"])
+    wins = max(profile_wins, history["wins"])
+    losses = max(profile_losses, history["losses"])
+    draws = max(profile_draws, history["draws"])
+
+    profile_xp = profile.get("total_xp", 0) if profile else 0
+    profile_xp = profile_xp or 0
+    xp = max(profile_xp, history["total_xp"])
+
+    score = max(profile_score, history["total_score"])
+
+    profile_streak = profile.get("best_streak", 0) if profile else 0
+    profile_streak = profile_streak or 0
+    streak = max(profile_streak, history["best_streak"])
 
     win_rate = round(wins / matches * 100) if matches else 0
     level = (xp // 1000) + 1
